@@ -1,0 +1,63 @@
+[package]
+name = "zentinel-agent-image-optimization"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zentinel Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zentinelproxy/zentinel-agent-image-optimization"
+description = "Image optimization agent for Zentinel proxy - on-the-fly WebP/AVIF conversion with caching"
+keywords = ["zentinel", "proxy", "agent", "image-optimization", "webp"]
+categories = ["network-programming", "multimedia::images"]
+
+[[bin]]
+name = "zentinel-image-optimization-agent"
+path = "src/main.rs"
+
+[lib]
+name = "zentinel_agent_image_optimization"
+path = "src/lib.rs"
+
+[dependencies]
+# Zentinel Protocol
+zentinel-agent-protocol = "0.5"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "fs"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+ravif = "0.11"
+rgb = "0.8"
+
+# Pattern matching
+regex = "1"
+
+# Hashing (for cache keys)
+sha2 = "0.10"
+hex = "0.4"
+
+# Per-request state
+dashmap = "6"
+
+# Base64 encoding for body chunks
+base64 = "0.22"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"

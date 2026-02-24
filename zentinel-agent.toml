@@ -1,0 +1,27 @@
+# Image Optimization Agent manifest
+# This file describes the agent for the Zentinel agent registry
+
+[agent]
+name = "image-optimization"
+version = "0.1.0"
+description = "On-the-fly JPEG/PNG to WebP/AVIF conversion with content-addressable caching"
+authors = ["Zentinel Contributors"]
+
+[agent.capabilities]
+events = [
+    "configure",
+    "request_headers",
+    "response_headers",
+    "response_body",
+    "request_complete",
+]
+
+[agent.config]
+# Default configuration schema
+formats = ["webp", "avif"]
+max_input_size_bytes = 10485760
+max_pixel_count = 25000000
+
+[agent.transport]
+# Default transport configuration
+unix_socket = { path = "/tmp/image-optimization-agent.sock" }
