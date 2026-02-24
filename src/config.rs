@@ -238,8 +238,10 @@ mod tests {
 
     #[test]
     fn empty_formats_rejected() {
-        let mut config = ImageOptConfig::default();
-        config.formats = vec![];
+        let config = ImageOptConfig {
+            formats: vec![],
+            ..Default::default()
+        };
         assert!(validate_config(&config).is_err());
     }
 
@@ -256,15 +258,19 @@ mod tests {
 
     #[test]
     fn invalid_regex_rejected() {
-        let mut config = ImageOptConfig::default();
-        config.passthrough_patterns = vec!["[invalid".to_string()];
+        let config = ImageOptConfig {
+            passthrough_patterns: vec!["[invalid".to_string()],
+            ..Default::default()
+        };
         assert!(validate_config(&config).is_err());
     }
 
     #[test]
     fn valid_passthrough_patterns_accepted() {
-        let mut config = ImageOptConfig::default();
-        config.passthrough_patterns = vec![r"\.gif$".to_string(), r"\.svg$".to_string()];
+        let config = ImageOptConfig {
+            passthrough_patterns: vec![r"\.gif$".to_string(), r"\.svg$".to_string()],
+            ..Default::default()
+        };
         assert!(validate_config(&config).is_ok());
     }
 

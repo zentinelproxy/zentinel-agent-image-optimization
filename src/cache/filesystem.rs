@@ -142,8 +142,7 @@ impl FilesystemCache {
                             while let Ok(Some(file)) = files.next_entry().await {
                                 let path = file.path();
                                 if path.extension().is_some_and(|ext| ext == "bin") {
-                                    let size =
-                                        file.metadata().await.map(|m| m.len()).unwrap_or(0);
+                                    let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
                                     // Read the metadata sidecar for created_at
                                     let meta_path = path.with_extension("meta.json");
                                     let created_at = read_created_at(&meta_path).await;
@@ -176,8 +175,7 @@ impl FilesystemCache {
             freed += size;
         }
 
-        self.current_size
-            .fetch_sub(freed, Ordering::Relaxed);
+        self.current_size.fetch_sub(freed, Ordering::Relaxed);
 
         debug!(freed_bytes = freed, "Cache eviction complete");
     }
@@ -258,9 +256,9 @@ impl CacheStore for FilesystemCache {
         }
 
         // Write data file
-        fs::write(&data_path, data).await.map_err(|e| {
-            ImageOptError::CacheError(format!("failed to write cache data: {}", e))
-        })?;
+        fs::write(&data_path, data)
+            .await
+            .map_err(|e| ImageOptError::CacheError(format!("failed to write cache data: {}", e)))?;
 
         // Write metadata sidecar
         let meta_bytes = serde_json::to_vec(meta).map_err(|e| {
@@ -310,9 +308,19 @@ mod tests {
         let cache = test_cache(dir.path()).await;
 
         let meta = test_meta();
-        cache.put("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", b"image data", &meta).await.unwrap();
+        cache
+            .put(
+                "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+                b"image data",
+                &meta,
+            )
+            .await
+            .unwrap();
 
-        let result = cache.get("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").await.unwrap();
+        let result = cache
+            .get("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+            .await
+            .unwrap();
         assert!(result.is_some());
         let (data, cached_meta) = result.unwrap();
         assert_eq!(data, b"image data");
@@ -325,7 +333,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = test_cache(dir.path()).await;
 
-        let result = cache.get("0000000000000000000000000000000000000000000000000000000000000000").await.unwrap();
+        let result = cache
+            .get("0000000000000000000000000000000000000000000000000000000000000000")
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -374,11 +385,16 @@ mod tests {
                 optimized_size: 50,
                 created_at: now - (5 - i), // Oldest first
             };
-            cache.put(&key, &vec![0u8; 50], &meta).await.unwrap();
+            cache.put(&key, &[0u8; 50], &meta).await.unwrap();
         }
 
         // After eviction, total size should be under the limit
         let current = cache.current_size.load(Ordering::Relaxed);
-        assert!(current <= config.max_size_bytes, "Cache size {} exceeds limit {}", current, config.max_size_bytes);
+        assert!(
+            current <= config.max_size_bytes,
+            "Cache size {} exceeds limit {}",
+            current,
+            config.max_size_bytes
+        );
     }
 }
