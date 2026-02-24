@@ -104,9 +104,9 @@ fn config_no_cache() -> ImageOptConfig {
 
 /// Check that response headers contain a Set with the given name and value.
 fn has_header(headers: &[HeaderOp], name: &str, value: &str) -> bool {
-    headers.iter().any(
-        |h| matches!(h, HeaderOp::Set { name: n, value: v } if n == name && v == value),
-    )
+    headers
+        .iter()
+        .any(|h| matches!(h, HeaderOp::Set { name: n, value: v } if n == name && v == value))
 }
 
 /// Check that response headers contain a Set with the given name (any value).
@@ -191,14 +191,21 @@ async fn jpeg_to_webp_conversion() {
     assert_eq!(&body[8..12], b"WEBP", "WebP RIFF subtype must be WEBP");
 
     // Verify response headers
-    assert!(has_header(&resp.response_headers, "content-type", "image/webp"));
+    assert!(has_header(
+        &resp.response_headers,
+        "content-type",
+        "image/webp"
+    ));
     assert!(has_header(
         &resp.response_headers,
         "x-image-optimized",
         "webp"
     ));
     assert!(has_header(&resp.response_headers, "vary", "Accept"));
-    assert!(has_header_name(&resp.response_headers, "x-image-original-size"));
+    assert!(has_header_name(
+        &resp.response_headers,
+        "x-image-original-size"
+    ));
     assert!(has_header_name(&resp.response_headers, "content-length"));
 
     client.close().await.unwrap();
@@ -262,7 +269,11 @@ async fn png_to_webp_conversion() {
         .unwrap();
     assert_eq!(&body[0..4], b"RIFF");
     assert_eq!(&body[8..12], b"WEBP");
-    assert!(has_header(&resp.response_headers, "content-type", "image/webp"));
+    assert!(has_header(
+        &resp.response_headers,
+        "content-type",
+        "image/webp"
+    ));
     assert!(has_header(
         &resp.response_headers,
         "x-image-optimized",
@@ -330,7 +341,11 @@ async fn jpeg_to_avif_conversion() {
         .unwrap();
     // AVIF: ftyp box at bytes 4-7
     assert_eq!(&body[4..8], b"ftyp", "AVIF must contain ftyp box");
-    assert!(has_header(&resp.response_headers, "content-type", "image/avif"));
+    assert!(has_header(
+        &resp.response_headers,
+        "content-type",
+        "image/avif"
+    ));
     assert!(has_header(
         &resp.response_headers,
         "x-image-optimized",
@@ -403,9 +418,7 @@ async fn cache_hit_on_second_request() {
     let mutation1 = resp1
         .response_body_mutation
         .expect("expected body mutation");
-    let first_image = B64
-        .decode(mutation1.data.expect("expected data"))
-        .unwrap();
+    let first_image = B64.decode(mutation1.data.expect("expected data")).unwrap();
     assert!(has_header(
         &resp1.response_headers,
         "x-image-optimized",
@@ -485,9 +498,7 @@ async fn cache_hit_on_second_request() {
     let mutation2 = resp2
         .response_body_mutation
         .expect("expected body mutation");
-    let second_image = B64
-        .decode(mutation2.data.expect("expected data"))
-        .unwrap();
+    let second_image = B64.decode(mutation2.data.expect("expected data")).unwrap();
 
     // Both responses should produce identical image bytes
     assert_eq!(
@@ -805,9 +816,7 @@ async fn corrupt_image_graceful_fallback() {
     let mutation = resp.response_body_mutation.expect("expected body mutation");
     assert!(!mutation.is_pass_through());
     assert!(!mutation.is_drop());
-    let returned = B64
-        .decode(mutation.data.expect("expected data"))
-        .unwrap();
+    let returned = B64.decode(mutation.data.expect("expected data")).unwrap();
     assert_eq!(returned, corrupt, "should fall back to original bytes");
 
     // No conversion headers
@@ -921,12 +930,14 @@ async fn multi_chunk_body_assembly() {
 
     // Verify converted output
     let mutation = resp.response_body_mutation.expect("expected body mutation");
-    let body = B64
-        .decode(mutation.data.expect("expected data"))
-        .unwrap();
+    let body = B64.decode(mutation.data.expect("expected data")).unwrap();
     assert_eq!(&body[0..4], b"RIFF");
     assert_eq!(&body[8..12], b"WEBP");
-    assert!(has_header(&resp.response_headers, "content-type", "image/webp"));
+    assert!(has_header(
+        &resp.response_headers,
+        "content-type",
+        "image/webp"
+    ));
     assert!(has_header(
         &resp.response_headers,
         "x-image-optimized",
@@ -964,8 +975,7 @@ async fn concurrent_requests() {
                 .unwrap();
 
             let mut resp_headers = HashMap::new();
-            resp_headers
-                .insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+            resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
             client
                 .send_event(
                     EventType::ResponseHeaders,
@@ -1002,14 +1012,10 @@ async fn concurrent_requests() {
     for task in tasks {
         let resp = task.await.expect("task should not panic");
         assert_eq!(resp.decision, Decision::Allow);
-        let mutation = resp
-            .response_body_mutation
-            .expect("expected body mutation");
+        let mutation = resp.response_body_mutation.expect("expected body mutation");
         assert!(!mutation.is_pass_through());
         assert!(!mutation.is_drop());
-        let body = B64
-            .decode(mutation.data.expect("expected data"))
-            .unwrap();
+        let body = B64.decode(mutation.data.expect("expected data")).unwrap();
         assert_eq!(&body[0..4], b"RIFF");
         assert_eq!(&body[8..12], b"WEBP");
     }
