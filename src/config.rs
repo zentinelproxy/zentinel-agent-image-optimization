@@ -281,6 +281,13 @@ mod tests {
     }
 
     #[test]
+    fn shipped_default_json_is_valid() {
+        let json = include_str!("../config/default.json");
+        let config: ImageOptConfig = serde_json::from_str(json).unwrap();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
     fn config_deserializes_from_json() {
         let json = r#"{
             "formats": ["webp"],
