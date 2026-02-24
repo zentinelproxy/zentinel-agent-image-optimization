@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 
 use zentinel_agent_image_optimization::{ImageOptAgent, ImageOptConfig};
 use zentinel_agent_protocol::{
-    AgentClient, AgentServer, Decision, EventType, HeaderOp, RequestCompleteEvent,
+    AgentClient, AgentServer, ConfigureEvent, Decision, EventType, HeaderOp, RequestCompleteEvent,
     RequestHeadersEvent, RequestMetadata, ResponseBodyChunkEvent, ResponseHeadersEvent,
 };
 
@@ -1107,6 +1107,605 @@ async fn request_complete_cleanup() {
     assert!(
         mutation.is_pass_through(),
         "after cleanup, body should pass through (no state found)"
+    );
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn buffer_overflow_passes_through() {
+    let mut config = config_no_cache();
+    config.max_input_size_bytes = 50; // tiny limit
+    let (handle, socket_path, _dir) = start_agent(config).await;
+    let mut client = connect(&socket_path).await;
+    let cid = "buf-overflow";
+
+    // Request headers — eligible JPEG flow
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/big.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Response headers — origin sends JPEG
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Send body chunk > 50 bytes (test JPEG is ~600 bytes)
+    let jpeg_data = test_jpeg();
+    assert!(jpeg_data.len() > 50, "test JPEG must exceed 50 byte limit");
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        mutation.is_pass_through(),
+        "buffer overflow should pass through"
+    );
+    assert!(
+        !has_header_name(&resp.response_headers, "x-image-optimized"),
+        "no optimization header on overflow"
+    );
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn base64_decode_failure_passes_through() {
+    let (handle, socket_path, _dir) = start_agent(config_no_cache()).await;
+    let mut client = connect(&socket_path).await;
+    let cid = "bad-b64";
+
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/cat.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Send invalid base64 data directly (not encoded via B64.encode)
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: "!!!not-valid-base64!!!".to_string(),
+                is_last: true,
+                total_size: Some(21),
+                chunk_index: 0,
+                bytes_sent: 21,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        mutation.is_pass_through(),
+        "base64 decode failure should pass through"
+    );
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn configure_valid_update_changes_behavior() {
+    // Start with default config (formats=[WebP, Avif])
+    let (handle, socket_path, _dir) = start_agent(config_no_cache()).await;
+    let mut client = connect(&socket_path).await;
+
+    // Reconfigure to only support WebP
+    let resp = client
+        .send_event(
+            EventType::Configure,
+            &ConfigureEvent {
+                agent_id: "e2e-image-opt".to_string(),
+                config: serde_json::json!({
+                    "formats": ["webp"],
+                    "cache": { "enabled": false }
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.decision, Decision::Allow, "valid config should Allow");
+
+    // Request with Accept: image/avif — should pass through (AVIF removed)
+    let cid_avif = "cfg-avif";
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/avif".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid_avif),
+                method: "GET".to_string(),
+                uri: "/photos/a.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid_avif.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let jpeg_data = test_jpeg();
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid_avif.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        mutation.is_pass_through(),
+        "AVIF should pass through after removing it from formats"
+    );
+
+    // Request with Accept: image/webp — should still convert
+    let cid_webp = "cfg-webp";
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid_webp),
+                method: "GET".to_string(),
+                uri: "/photos/b.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid_webp.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid_webp.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(!mutation.is_pass_through(), "WebP should still convert");
+    let body = B64
+        .decode(mutation.data.expect("expected body data"))
+        .unwrap();
+    assert_eq!(&body[0..4], b"RIFF");
+    assert_eq!(&body[8..12], b"WEBP");
+    assert!(has_header(
+        &resp.response_headers,
+        "x-image-optimized",
+        "webp"
+    ));
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn configure_invalid_config_rejects() {
+    let (handle, socket_path, _dir) = start_agent(config_no_cache()).await;
+    let mut client = connect(&socket_path).await;
+
+    // Send invalid config: empty formats list fails validation
+    let resp = client
+        .send_event(
+            EventType::Configure,
+            &ConfigureEvent {
+                agent_id: "e2e-image-opt".to_string(),
+                config: serde_json::json!({
+                    "formats": [],
+                    "cache": { "enabled": false }
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(resp.decision, Decision::Block { status: 500, .. }),
+        "empty formats should be rejected with Block 500, got {:?}",
+        resp.decision
+    );
+
+    // Original config should still work — send a normal WebP conversion
+    let cid = "cfg-reject";
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/still-works.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let jpeg_data = test_jpeg();
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        !mutation.is_pass_through(),
+        "conversion should still work after rejected config"
+    );
+    assert!(has_header(
+        &resp.response_headers,
+        "x-image-optimized",
+        "webp"
+    ));
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn configure_malformed_json_preserves_config() {
+    let (handle, socket_path, _dir) = start_agent(config_no_cache()).await;
+    let mut client = connect(&socket_path).await;
+
+    // Send malformed config: formats is a string instead of an array (type mismatch)
+    let resp = client
+        .send_event(
+            EventType::Configure,
+            &ConfigureEvent {
+                agent_id: "e2e-image-opt".to_string(),
+                config: serde_json::json!({
+                    "formats": "not-an-array"
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.decision,
+        Decision::Allow,
+        "malformed config should Allow (parse failure keeps existing config)"
+    );
+
+    // Original config should still work
+    let cid = "cfg-malformed";
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/still-works.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let jpeg_data = test_jpeg();
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        !mutation.is_pass_through(),
+        "conversion should still work after malformed config"
+    );
+    assert!(has_header(
+        &resp.response_headers,
+        "x-image-optimized",
+        "webp"
+    ));
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cache_write_failure_still_converts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let cache_dir = tempdir().expect("failed to create cache dir");
+    let mut config = ImageOptConfig::default();
+    config.cache.enabled = true;
+    config.cache.directory = cache_dir.path().to_str().unwrap().to_string();
+
+    let (handle, socket_path, _dir) = start_agent(config).await;
+    let mut client = connect(&socket_path).await;
+
+    // Make cache dir read-only to trigger write failures
+    std::fs::set_permissions(cache_dir.path(), std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    let cid = "cache-write-fail";
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/cat.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let jpeg_data = test_jpeg();
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Conversion should still succeed despite cache write failure
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(!mutation.is_pass_through());
+    assert!(!mutation.is_drop());
+    let body = B64
+        .decode(mutation.data.expect("expected body data"))
+        .unwrap();
+    assert_eq!(&body[0..4], b"RIFF", "output should be valid WebP");
+    assert_eq!(&body[8..12], b"WEBP");
+    assert!(has_header(
+        &resp.response_headers,
+        "x-image-optimized",
+        "webp"
+    ));
+
+    // Restore permissions for cleanup
+    std::fs::set_permissions(cache_dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    client.close().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_pixel_count_fallback() {
+    let mut config = config_no_cache();
+    config.max_pixel_count = 10; // test JPEG is 4x4 = 16 pixels > 10
+
+    let (handle, socket_path, _dir) = start_agent(config).await;
+    let mut client = connect(&socket_path).await;
+    let cid = "pixel-limit";
+
+    let mut headers = HashMap::new();
+    headers.insert("accept".to_string(), vec!["image/webp".to_string()]);
+    client
+        .send_event(
+            EventType::RequestHeaders,
+            &RequestHeadersEvent {
+                metadata: test_metadata(cid),
+                method: "GET".to_string(),
+                uri: "/photos/big.jpg".to_string(),
+                headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut resp_headers = HashMap::new();
+    resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
+    client
+        .send_event(
+            EventType::ResponseHeaders,
+            &ResponseHeadersEvent {
+                correlation_id: cid.to_string(),
+                status: 200,
+                headers: resp_headers,
+            },
+        )
+        .await
+        .unwrap();
+
+    let jpeg_data = test_jpeg();
+    let resp = client
+        .send_event(
+            EventType::ResponseBodyChunk,
+            &ResponseBodyChunkEvent {
+                correlation_id: cid.to_string(),
+                data: B64.encode(&jpeg_data),
+                is_last: true,
+                total_size: Some(jpeg_data.len()),
+                chunk_index: 0,
+                bytes_sent: jpeg_data.len(),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Converter fails with ImageTooLarge → handler returns original bytes via replace
+    let mutation = resp.response_body_mutation.expect("expected body mutation");
+    assert!(
+        !mutation.is_pass_through(),
+        "should be a replace mutation, not pass-through"
+    );
+    assert!(!mutation.is_drop());
+    let returned = B64
+        .decode(mutation.data.expect("expected body data"))
+        .unwrap();
+    assert_eq!(
+        returned, jpeg_data,
+        "should fall back to original JPEG bytes"
+    );
+    assert!(
+        !has_header_name(&resp.response_headers, "x-image-optimized"),
+        "no optimization header on pixel count fallback"
     );
 
     client.close().await.unwrap();
