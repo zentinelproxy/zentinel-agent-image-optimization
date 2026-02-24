@@ -28,10 +28,6 @@ pub trait CacheStore: Send + Sync {
     async fn get(&self, key: &str) -> Result<Option<(Vec<u8>, CacheEntryMeta)>, ImageOptError>;
 
     /// Store an image in the cache.
-    async fn put(
-        &self,
-        key: &str,
-        data: &[u8],
-        meta: &CacheEntryMeta,
-    ) -> Result<(), ImageOptError>;
+    async fn put(&self, key: &str, data: &[u8], meta: &CacheEntryMeta)
+        -> Result<(), ImageOptError>;
 }

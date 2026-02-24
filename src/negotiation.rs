@@ -61,7 +61,10 @@ fn matches_type(range: &str, content_type: &str) -> bool {
 /// the configured format priority list.
 ///
 /// Returns `None` if the client doesn't support any configured format.
-pub fn negotiate_format(accept_header: Option<&str>, configured_formats: &[OutputFormat]) -> Option<OutputFormat> {
+pub fn negotiate_format(
+    accept_header: Option<&str>,
+    configured_formats: &[OutputFormat],
+) -> Option<OutputFormat> {
     let accept = match accept_header {
         Some(h) if !h.is_empty() => h,
         // No Accept header means the client accepts anything
@@ -105,35 +108,50 @@ mod tests {
     #[test]
     fn empty_accept_header_returns_first_format() {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
-        assert_eq!(negotiate_format(Some(""), &formats), Some(OutputFormat::WebP));
+        assert_eq!(
+            negotiate_format(Some(""), &formats),
+            Some(OutputFormat::WebP)
+        );
     }
 
     #[test]
     fn explicit_webp_support() {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
         let accept = "image/webp, image/png, image/jpeg";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::WebP));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::WebP)
+        );
     }
 
     #[test]
     fn explicit_avif_support_when_webp_not_accepted() {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
         let accept = "image/avif, image/png, image/jpeg";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::Avif));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::Avif)
+        );
     }
 
     #[test]
     fn wildcard_image_accepts_first_format() {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
         let accept = "image/*, text/html";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::WebP));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::WebP)
+        );
     }
 
     #[test]
     fn global_wildcard_accepts_first_format() {
         let formats = vec![OutputFormat::Avif, OutputFormat::WebP];
         let accept = "*/*";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::Avif));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::Avif)
+        );
     }
 
     #[test]
@@ -141,7 +159,10 @@ mod tests {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
         // Client explicitly rejects webp but accepts avif
         let accept = "image/webp;q=0, image/avif;q=0.8, image/jpeg";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::Avif));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::Avif)
+        );
     }
 
     #[test]
@@ -155,14 +176,21 @@ mod tests {
     fn quality_values_parsed_correctly() {
         let formats = vec![OutputFormat::WebP];
         let accept = "image/webp;q=0.9, image/jpeg;q=1.0";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::WebP));
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::WebP)
+        );
     }
 
     #[test]
     fn complex_accept_header() {
         let formats = vec![OutputFormat::WebP, OutputFormat::Avif];
-        let accept = "text/html, application/xhtml+xml, image/avif, image/webp, image/apng, */*;q=0.8";
-        assert_eq!(negotiate_format(Some(accept), &formats), Some(OutputFormat::WebP));
+        let accept =
+            "text/html, application/xhtml+xml, image/avif, image/webp, image/apng, */*;q=0.8";
+        assert_eq!(
+            negotiate_format(Some(accept), &formats),
+            Some(OutputFormat::WebP)
+        );
     }
 
     #[test]

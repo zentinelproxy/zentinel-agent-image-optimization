@@ -65,14 +65,19 @@ impl ImageOptAgent {
         // Create converters for configured formats
         let converters = DashMap::new();
         for &format in &config.formats {
-            converters.insert(format.as_str().to_string(), converter::create_converter(format));
+            converters.insert(
+                format.as_str().to_string(),
+                converter::create_converter(format),
+            );
         }
 
         // Initialize cache if enabled
         let cache = if config.cache.enabled {
-            Some(FilesystemCache::new(&config.cache).await.map_err(|e| {
-                anyhow::anyhow!("failed to initialize cache: {}", e)
-            })?)
+            Some(
+                FilesystemCache::new(&config.cache)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to initialize cache: {}", e))?,
+            )
         } else {
             None
         };
@@ -143,10 +148,7 @@ impl AgentHandler for ImageOptAgent {
                         Ok(c) => Some(c),
                         Err(e) => {
                             error!(error = %e, "Failed to initialize cache");
-                            return AgentResponse::block(
-                                500,
-                                Some(format!("Cache error: {}", e)),
-                            );
+                            return AgentResponse::block(500, Some(format!("Cache error: {}", e)));
                         }
                     }
                 } else {
@@ -178,11 +180,7 @@ impl AgentHandler for ImageOptAgent {
         );
 
         // Extract Accept header
-        let accept_header = event
-            .headers
-            .get("accept")
-            .and_then(|v| v.first())
-            .cloned();
+        let accept_header = event.headers.get("accept").and_then(|v| v.first()).cloned();
 
         // Check passthrough patterns
         let patterns = self.passthrough_patterns.read().await;
@@ -252,8 +250,7 @@ impl AgentHandler for ImageOptAgent {
         state.response_content_type = Some(content_type);
 
         // Negotiate output format
-        let target_format =
-            negotiate_format(state.accept_header.as_deref(), &config.formats);
+        let target_format = negotiate_format(state.accept_header.as_deref(), &config.formats);
 
         let target_format = match target_format {
             Some(f) => f,
@@ -398,8 +395,9 @@ impl AgentHandler for ImageOptAgent {
             None => {
                 let data = state.response_buffer.take();
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                return AgentResponse::default_allow()
-                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                return AgentResponse::default_allow().with_response_body_mutation(
+                    BodyMutation::replace(event.chunk_index, encoded),
+                );
             }
         };
 
@@ -445,8 +443,9 @@ impl AgentHandler for ImageOptAgent {
                     "Conversion failed, passing through original"
                 );
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&complete_body);
-                return AgentResponse::default_allow()
-                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                return AgentResponse::default_allow().with_response_body_mutation(
+                    BodyMutation::replace(event.chunk_index, encoded),
+                );
             }
             Err(e) => {
                 error!(
@@ -455,8 +454,9 @@ impl AgentHandler for ImageOptAgent {
                     "Conversion task panicked, passing through original"
                 );
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&complete_body);
-                return AgentResponse::default_allow()
-                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                return AgentResponse::default_allow().with_response_body_mutation(
+                    BodyMutation::replace(event.chunk_index, encoded),
+                );
             }
         };
 
@@ -586,7 +586,10 @@ mod tests {
 
         // 1. Request headers with Accept: image/webp
         let mut headers = HashMap::new();
-        headers.insert("accept".to_string(), vec!["image/webp, image/jpeg".to_string()]);
+        headers.insert(
+            "accept".to_string(),
+            vec!["image/webp, image/jpeg".to_string()],
+        );
 
         agent
             .on_request_headers(RequestHeadersEvent {
@@ -599,10 +602,7 @@ mod tests {
 
         // 2. Response headers with Content-Type: image/jpeg
         let mut resp_headers = HashMap::new();
-        resp_headers.insert(
-            "content-type".to_string(),
-            vec!["image/jpeg".to_string()],
-        );
+        resp_headers.insert("content-type".to_string(), vec!["image/jpeg".to_string()]);
 
         let response = agent
             .on_response_headers(ResponseHeadersEvent {
@@ -613,7 +613,10 @@ mod tests {
             .await;
 
         // Should remove content-length
-        assert!(response.response_headers.iter().any(|h| matches!(h, HeaderOp::Remove { name } if name == "content-length")));
+        assert!(response
+            .response_headers
+            .iter()
+            .any(|h| matches!(h, HeaderOp::Remove { name } if name == "content-length")));
 
         // 3. Response body (single chunk with JPEG data)
         let jpeg_data = test_jpeg();
@@ -704,7 +707,10 @@ mod tests {
 
         // Request headers with no WebP/AVIF support
         let mut headers = HashMap::new();
-        headers.insert("accept".to_string(), vec!["image/jpeg, image/png".to_string()]);
+        headers.insert(
+            "accept".to_string(),
+            vec!["image/jpeg, image/png".to_string()],
+        );
         agent
             .on_request_headers(RequestHeadersEvent {
                 metadata: test_metadata(cid),

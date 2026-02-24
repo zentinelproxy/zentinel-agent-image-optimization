@@ -16,7 +16,12 @@ impl ImageConverter for WebPConverter {
         "image/webp"
     }
 
-    fn convert(&self, input: &[u8], _quality: u8, max_pixel_count: u64) -> Result<Vec<u8>, ImageOptError> {
+    fn convert(
+        &self,
+        input: &[u8],
+        _quality: u8,
+        max_pixel_count: u64,
+    ) -> Result<Vec<u8>, ImageOptError> {
         // Decode the source image
         let img = image::load_from_memory(input)
             .map_err(|e| ImageOptError::DecodeError(e.to_string()))?;

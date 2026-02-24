@@ -8,8 +8,8 @@ use clap::Parser;
 use std::path::PathBuf;
 use tracing::info;
 
-use zentinel_agent_protocol::{AgentServer, GrpcAgentServer};
 use zentinel_agent_image_optimization::{ImageOptAgent, ImageOptConfig};
+use zentinel_agent_protocol::{AgentServer, GrpcAgentServer};
 
 /// Image Optimization Agent command-line arguments.
 #[derive(Parser, Debug)]

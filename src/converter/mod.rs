@@ -21,7 +21,12 @@ pub trait ImageConverter: Send + Sync {
     /// Returns `ImageOptError::DecodeError` if the input cannot be decoded.
     /// Returns `ImageOptError::EncodeError` if encoding fails.
     /// Returns `ImageOptError::ImageTooLarge` if the pixel count exceeds the limit.
-    fn convert(&self, input: &[u8], quality: u8, max_pixel_count: u64) -> Result<Vec<u8>, ImageOptError>;
+    fn convert(
+        &self,
+        input: &[u8],
+        quality: u8,
+        max_pixel_count: u64,
+    ) -> Result<Vec<u8>, ImageOptError>;
 }
 
 /// Create a converter for the specified output format.
