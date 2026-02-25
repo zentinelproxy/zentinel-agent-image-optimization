@@ -37,11 +37,9 @@ Configure Zentinel to use the agent:
 ```kdl
 agents {
     agent "image-optimization" {
-        transport "unix" {
-            path "/tmp/image-optimization.sock"
-        }
+        unix-socket "/tmp/image-optimization.sock"
         events "request_headers" "response_headers" "response_body" "request_complete"
-        protocol "v2"
+        protocol-version "v2"
         timeout-ms 5000
         failure-mode "open"
 
