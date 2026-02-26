@@ -222,7 +222,6 @@ agents {
     agent "image-opt" {
         type "custom"
         unix-socket "${SOCKET_PATH}"
-        protocol-version "v2"
         events "request_headers" "response_headers" "response_body" "request_complete"
         timeout-ms 10000
         failure-mode "open"

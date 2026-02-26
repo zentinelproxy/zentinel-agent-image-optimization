@@ -55,7 +55,6 @@ agents {
     agent "image-optimization" {
         unix-socket "/tmp/image-optimization.sock"
         events "request_headers" "response_headers" "response_body" "request_complete"
-        protocol-version "v2"
         timeout-ms 5000
         failure-mode "open"
 
