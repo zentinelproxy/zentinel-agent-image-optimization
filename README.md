@@ -14,13 +14,29 @@ On-the-fly JPEG/PNG to WebP/AVIF conversion agent for [Zentinel](https://zentine
 
 ## Installation
 
+### Using Bundle (Recommended)
+
+```bash
+# Install just this agent
+zentinel bundle install image-optimization
+
+# Or install all bundled agents
+zentinel bundle install
+```
+
+The bundle command downloads the correct binary for your platform and places it in the standard location. See the [bundle documentation](https://zentinelproxy.io/docs/deployment/bundle/) for details.
+
+### Using Cargo
+
 ```bash
 cargo install zentinel-agent-image-optimization
 ```
 
-Or build from source:
+### From Source
 
 ```bash
+git clone https://github.com/zentinelproxy/zentinel-agent-image-optimization
+cd zentinel-agent-image-optimization
 cargo build --release
 ```
 
@@ -44,17 +60,20 @@ agents {
         failure-mode "open"
 
         config {
-            "formats" ["webp", "avif"]
-            "quality" { "webp" 80; "avif" 70 }
-            "max_input_size_bytes" 10485760
-            "max_pixel_count" 25000000
-            "eligible_content_types" ["image/jpeg", "image/png"]
-            "passthrough_patterns" ["\\.gif$", "\\.svg$"]
-            "cache" {
-                "enabled" true
-                "directory" "/var/cache/zentinel/image-optimization"
-                "max_size_bytes" 1073741824
-                "ttl_secs" 86400
+            formats "webp" "avif"
+            quality {
+                webp 80
+                avif 70
+            }
+            max_input_size_bytes 10485760
+            max_pixel_count 25000000
+            eligible_content_types "image/jpeg" "image/png"
+            passthrough_patterns "\\.gif$" "\\.svg$"
+            cache {
+                enabled #true
+                directory "/var/cache/zentinel/image-optimization"
+                max_size_bytes 1073741824
+                ttl_secs 86400
             }
         }
     }

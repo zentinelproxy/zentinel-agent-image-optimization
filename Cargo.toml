@@ -19,7 +19,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Zentinel Protocol
-zentinel-agent-protocol = "0.5"
+zentinel-agent-protocol = { path = "../zentinel/crates/agent-protocol" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "fs"] }

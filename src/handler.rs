@@ -14,9 +14,10 @@ use regex::Regex;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+use zentinel_agent_protocol::v2::{AgentCapabilities, AgentFeatures, AgentHandlerV2};
 use zentinel_agent_protocol::{
-    AgentHandler, AgentResponse, BodyMutation, ConfigureEvent, HeaderOp, RequestCompleteEvent,
-    RequestHeadersEvent, ResponseBodyChunkEvent, ResponseHeadersEvent,
+    AgentResponse, BodyMutation, EventType, HeaderOp, RequestCompleteEvent, RequestHeadersEvent,
+    ResponseBodyChunkEvent, ResponseHeadersEvent,
 };
 
 /// Per-request state.
@@ -110,18 +111,31 @@ fn compile_patterns(patterns: &[String]) -> Result<Vec<Regex>, anyhow::Error> {
 }
 
 #[async_trait]
-impl AgentHandler for ImageOptAgent {
-    async fn on_configure(&self, event: ConfigureEvent) -> AgentResponse {
-        info!(agent_id = %event.agent_id, "Received configuration");
+impl AgentHandlerV2 for ImageOptAgent {
+    fn capabilities(&self) -> AgentCapabilities {
+        AgentCapabilities::new(
+            "image-optimization-agent",
+            "Image Optimization Agent",
+            env!("CARGO_PKG_VERSION"),
+        )
+        .with_event(EventType::RequestHeaders)
+        .with_event(EventType::ResponseHeaders)
+        .with_event(EventType::ResponseBodyChunk)
+        .with_event(EventType::RequestComplete)
+        .with_features(AgentFeatures {
+            streaming_body: true,
+            ..AgentFeatures::default()
+        })
+    }
 
-        match serde_json::from_value::<ImageOptConfig>(event.config.clone()) {
+    async fn on_configure(&self, config: serde_json::Value, _version: Option<String>) -> bool {
+        info!("Received configuration");
+
+        match serde_json::from_value::<ImageOptConfig>(config) {
             Ok(new_config) => {
                 if let Err(e) = validate_config(&new_config) {
                     error!(error = %e, "Invalid configuration");
-                    return AgentResponse::block(
-                        500,
-                        Some(format!("Invalid configuration: {}", e)),
-                    );
+                    return false;
                 }
 
                 // Recompile patterns
@@ -129,7 +143,7 @@ impl AgentHandler for ImageOptAgent {
                     Ok(p) => p,
                     Err(e) => {
                         error!(error = %e, "Failed to compile passthrough patterns");
-                        return AgentResponse::block(500, Some(format!("Pattern error: {}", e)));
+                        return false;
                     }
                 };
 
@@ -148,7 +162,7 @@ impl AgentHandler for ImageOptAgent {
                         Ok(c) => Some(c),
                         Err(e) => {
                             error!(error = %e, "Failed to initialize cache");
-                            return AgentResponse::block(500, Some(format!("Cache error: {}", e)));
+                            return false;
                         }
                     }
                 } else {
@@ -160,11 +174,11 @@ impl AgentHandler for ImageOptAgent {
                 *self.config.write().await = new_config;
 
                 info!("Configuration updated successfully");
-                AgentResponse::default_allow()
+                true
             }
             Err(e) => {
                 warn!(error = %e, "Failed to parse configuration, using defaults");
-                AgentResponse::default_allow()
+                true
             }
         }
     }

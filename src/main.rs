@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 use zentinel_agent_image_optimization::{ImageOptAgent, ImageOptConfig};
-use zentinel_agent_protocol::{AgentServer, GrpcAgentServer};
+use zentinel_agent_protocol::v2::{GrpcAgentServerV2, UdsAgentServerV2};
 
 /// Image Optimization Agent command-line arguments.
 #[derive(Parser, Debug)]
@@ -75,10 +75,10 @@ async fn main() -> Result<()> {
             info!(
                 version = env!("CARGO_PKG_VERSION"),
                 socket = ?socket,
-                "Starting image optimization agent (Unix socket)"
+                "Starting image optimization agent (Unix socket v2)"
             );
 
-            let server = AgentServer::new("image-optimization-agent", socket, agent);
+            let server = UdsAgentServerV2::new("image-optimization-agent", socket, agent);
 
             info!("Image optimization agent ready and listening on Unix socket");
 
@@ -91,10 +91,10 @@ async fn main() -> Result<()> {
             info!(
                 version = env!("CARGO_PKG_VERSION"),
                 grpc = %grpc_addr,
-                "Starting image optimization agent (gRPC)"
+                "Starting image optimization agent (gRPC v2)"
             );
 
-            let server = GrpcAgentServer::new("image-optimization-agent", agent);
+            let server = GrpcAgentServerV2::new("image-optimization-agent", agent);
             let addr = grpc_addr
                 .parse()
                 .context("Invalid gRPC address format (expected host:port)")?;
@@ -112,10 +112,10 @@ async fn main() -> Result<()> {
             info!(
                 version = env!("CARGO_PKG_VERSION"),
                 socket = ?socket,
-                "Starting image optimization agent (Unix socket, default)"
+                "Starting image optimization agent (Unix socket v2, default)"
             );
 
-            let server = AgentServer::new("image-optimization-agent", socket, agent);
+            let server = UdsAgentServerV2::new("image-optimization-agent", socket, agent);
 
             info!("Image optimization agent ready and listening on Unix socket");
 
