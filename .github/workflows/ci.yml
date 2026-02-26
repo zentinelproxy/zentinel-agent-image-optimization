@@ -18,6 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout zentinel (for agent-protocol path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: zentinelproxy/zentinel
+          path: ../zentinel
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -45,6 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout zentinel (for agent-protocol path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: zentinelproxy/zentinel
+          path: ../zentinel
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -87,6 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout zentinel (for agent-protocol path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: zentinelproxy/zentinel
+          path: ../zentinel
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

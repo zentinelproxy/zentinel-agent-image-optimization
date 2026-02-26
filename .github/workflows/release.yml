@@ -40,6 +40,12 @@ jobs:
         with:
           path: agent
 
+      - name: Checkout zentinel (for agent-protocol path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: zentinelproxy/zentinel
+          path: zentinel
+
       - name: Checkout SDK
         uses: actions/checkout@v4
         with:
