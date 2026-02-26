@@ -3575,7 +3575,7 @@ dependencies = [
 
 [[package]]
 name = "zentinel-agent-image-optimization"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3602,7 +3602,7 @@ dependencies = [
 
 [[package]]
 name = "zentinel-agent-protocol"
-version = "0.5.7"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "zentinel-common"
-version = "0.5.7"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "chrono",
