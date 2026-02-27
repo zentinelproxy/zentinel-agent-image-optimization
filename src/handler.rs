@@ -311,10 +311,29 @@ impl AgentHandlerV2 for ImageOptAgent {
         }
         drop(cache_guard);
 
-        // Remove Content-Length since the body size will change
-        AgentResponse::default_allow().add_response_header(HeaderOp::Remove {
-            name: "content-length".to_string(),
-        })
+        // Set headers proactively since response headers are sent before body processing.
+        // Content-Type must be set here; by the time on_response_body_chunk runs,
+        // the response headers have already been sent to the client.
+        let mut response = AgentResponse::default_allow()
+            .add_response_header(HeaderOp::Remove {
+                name: "content-length".to_string(),
+            })
+            .add_response_header(HeaderOp::Set {
+                name: "content-type".to_string(),
+                value: target_format.content_type().to_string(),
+            })
+            .add_response_header(HeaderOp::Set {
+                name: "vary".to_string(),
+                value: "Accept".to_string(),
+            })
+            .add_response_header(HeaderOp::Set {
+                name: "x-image-optimized".to_string(),
+                value: target_format.as_str().to_string(),
+            });
+
+        // Signal that we need the body for conversion
+        response.needs_more = true;
+        response
     }
 
     async fn on_response_body_chunk(&self, event: ResponseBodyChunkEvent) -> AgentResponse {
