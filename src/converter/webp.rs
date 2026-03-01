@@ -35,7 +35,9 @@ impl ImageConverter for WebPConverter {
             });
         }
 
-        // Encode to WebP lossless (the `image` crate's WebP encoder only supports VP8L)
+        // Encode to WebP lossless (VP8L). The pure-Rust image-webp encoder only supports
+        // lossless encoding. Lossy WebP would require native libwebp bindings. The quality
+        // parameter is unused for WebP — use AVIF for quality-controlled lossy compression.
         let mut output = std::io::Cursor::new(Vec::new());
         let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
 

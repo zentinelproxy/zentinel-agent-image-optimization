@@ -311,9 +311,10 @@ impl AgentHandlerV2 for ImageOptAgent {
         }
         drop(cache_guard);
 
-        // Set headers proactively since response headers are sent before body processing.
-        // Content-Type must be set here; by the time on_response_body_chunk runs,
-        // the response headers have already been sent to the client.
+        // Set Content-Type to the target format now. The proxy commits response headers
+        // before body filtering begins, so header modifications from body chunk responses
+        // are not applied. Conversion failures are very rare (invalid image data that passes
+        // Content-Type validation) and browsers handle MIME/content mismatches gracefully.
         let mut response = AgentResponse::default_allow()
             .add_response_header(HeaderOp::Remove {
                 name: "content-length".to_string(),
@@ -325,10 +326,6 @@ impl AgentHandlerV2 for ImageOptAgent {
             .add_response_header(HeaderOp::Set {
                 name: "vary".to_string(),
                 value: "Accept".to_string(),
-            })
-            .add_response_header(HeaderOp::Set {
-                name: "x-image-optimized".to_string(),
-                value: target_format.as_str().to_string(),
             });
 
         // Signal that we need the body for conversion
@@ -426,17 +423,25 @@ impl AgentHandlerV2 for ImageOptAgent {
         let target_format = match state.target_format {
             Some(f) => f,
             None => {
+                let original_ct = state.response_content_type.clone();
                 let data = state.response_buffer.take();
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                return AgentResponse::default_allow().with_response_body_mutation(
-                    BodyMutation::replace(event.chunk_index, encoded),
-                );
+                let mut resp = AgentResponse::default_allow()
+                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                if let Some(ct) = original_ct {
+                    resp = resp.add_response_header(HeaderOp::Set {
+                        name: "content-type".to_string(),
+                        value: ct,
+                    });
+                }
+                return resp;
             }
         };
 
         let complete_body = state.response_buffer.take();
         let original_size = complete_body.len();
         let uri = state.uri.clone();
+        let original_content_type = state.response_content_type.clone();
 
         // Release the state lock before the blocking conversion
         drop(state);
@@ -449,8 +454,15 @@ impl AgentHandlerV2 for ImageOptAgent {
         // Verify we have a converter for the target format
         if !self.converters.contains_key(target_format.as_str()) {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&complete_body);
-            return AgentResponse::default_allow()
+            let mut resp = AgentResponse::default_allow()
                 .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+            if let Some(ct) = &original_content_type {
+                resp = resp.add_response_header(HeaderOp::Set {
+                    name: "content-type".to_string(),
+                    value: ct.clone(),
+                });
+            }
+            return resp;
         }
 
         let format_str = target_format.as_str().to_string();
@@ -476,9 +488,15 @@ impl AgentHandlerV2 for ImageOptAgent {
                     "Conversion failed, passing through original"
                 );
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&complete_body);
-                return AgentResponse::default_allow().with_response_body_mutation(
-                    BodyMutation::replace(event.chunk_index, encoded),
-                );
+                let mut resp = AgentResponse::default_allow()
+                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                if let Some(ct) = &original_content_type {
+                    resp = resp.add_response_header(HeaderOp::Set {
+                        name: "content-type".to_string(),
+                        value: ct.clone(),
+                    });
+                }
+                return resp;
             }
             Err(e) => {
                 error!(
@@ -487,9 +505,15 @@ impl AgentHandlerV2 for ImageOptAgent {
                     "Conversion task panicked, passing through original"
                 );
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&complete_body);
-                return AgentResponse::default_allow().with_response_body_mutation(
-                    BodyMutation::replace(event.chunk_index, encoded),
-                );
+                let mut resp = AgentResponse::default_allow()
+                    .with_response_body_mutation(BodyMutation::replace(event.chunk_index, encoded));
+                if let Some(ct) = &original_content_type {
+                    resp = resp.add_response_header(HeaderOp::Set {
+                        name: "content-type".to_string(),
+                        value: ct.clone(),
+                    });
+                }
+                return resp;
             }
         };
 
@@ -645,11 +669,14 @@ mod tests {
             })
             .await;
 
-        // Should remove content-length
+        // Should remove content-length and set content-type to webp
         assert!(response
             .response_headers
             .iter()
             .any(|h| matches!(h, HeaderOp::Remove { name } if name == "content-length")));
+        assert!(response.response_headers.iter().any(
+            |h| matches!(h, HeaderOp::Set { name, value } if name == "content-type" && value == "image/webp")
+        ));
 
         // 3. Response body (single chunk with JPEG data)
         let jpeg_data = test_jpeg();

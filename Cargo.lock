@@ -3602,7 +3602,7 @@ dependencies = [
 
 [[package]]
 name = "zentinel-agent-protocol"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "zentinel-common"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "anyhow",
  "chrono",

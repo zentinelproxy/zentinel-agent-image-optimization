@@ -3,7 +3,7 @@
 
 [agent]
 name = "image-optimization"
-version = "0.1.0"
+version = "0.2.0"
 description = "On-the-fly JPEG/PNG to WebP/AVIF conversion with content-addressable caching"
 authors = ["Zentinel Contributors"]
 
@@ -12,7 +12,7 @@ events = [
     "configure",
     "request_headers",
     "response_headers",
-    "response_body",
+    "response_body_chunk",
     "request_complete",
 ]
 

@@ -157,7 +157,12 @@ fn default_cache_enabled() -> bool {
 }
 
 fn default_cache_directory() -> String {
-    "/var/cache/zentinel/image-optimization".to_string()
+    // Prefer XDG-style user cache dir, fall back to /tmp for non-root users
+    if let Ok(home) = std::env::var("HOME") {
+        format!("{}/.cache/zentinel/image-optimization", home)
+    } else {
+        "/tmp/zentinel-image-optimization-cache".to_string()
+    }
 }
 
 fn default_cache_max_size() -> u64 {
