@@ -1,0 +1,81 @@
+[Unit]
+Description=Zentinel Image Optimization Agent - WebP/AVIF Conversion with Caching
+Documentation=https://github.com/zentinelproxy/zentinel-agent-image-optimization
+After=network.target zentinel.service
+PartOf=zentinel.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/zentinel-image-optimization-agent \
+    --socket /var/run/zentinel/image-optimization.sock \
+    --config /etc/zentinel/agents/image-optimization.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=10
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+
+# User and permissions
+User=zentinel
+Group=zentinel
+UMask=0077
+
+# Environment
+Environment="RUST_LOG=info"
+EnvironmentFile=-/etc/zentinel/agents/image-optimization.env
+
+# Working directory
+WorkingDirectory=/var/lib/zentinel
+RuntimeDirectory=zentinel
+RuntimeDirectoryMode=0755
+
+# Cache directory for converted images
+CacheDirectory=zentinel/image-optimization
+CacheDirectoryMode=0700
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+PrivateNetwork=true
+PrivateDevices=true
+
+# Resource limits (higher than echo/ratelimit — image encoding is CPU/memory intensive)
+LimitNOFILE=16384
+LimitNPROC=512
+LimitCORE=0
+TasksMax=512
+CPUWeight=75
+CPUQuota=200%
+MemoryMax=1G
+MemoryHigh=768M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zentinel-image-optimization-agent
+
+# Process management
+OOMScoreAdjust=-100
+
+[Install]
+WantedBy=zentinel.service
