@@ -1,42 +1,102 @@
-# Image Optimization Agent
+<p align="center">
+  <a href="https://zentinelproxy.io">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-dark.svg">
+      <img alt="Zentinel" src="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-light.svg" height="52">
+    </picture>
+  </a>
+</p>
 
-On-the-fly JPEG/PNG to WebP/AVIF conversion agent for [Zentinel](https://zentinelproxy.io) reverse proxy. Negotiates the best format from the client's `Accept` header, converts images via `spawn_blocking`, and caches results in a content-addressable filesystem store. Falls back to the original image on any error — the agent never makes a response worse.
+<h3 align="center">Image optimization agent</h3>
 
-## Features
+<p align="center">Converts JPEG and PNG responses to WebP or AVIF in the response phase, chosen from the client's <code>Accept</code> header, and caches the result on disk.</p>
 
-- **Format Negotiation**: Parses `Accept` header quality values (RFC 7231) to pick WebP or AVIF
-- **WebP Conversion**: Lossless VP8L encoding via the `image` crate
-- **AVIF Conversion**: Lossy encoding with configurable quality via `ravif`
-- **Filesystem Cache**: Content-addressable, two-level directory sharding, LRU eviction, configurable TTL
-- **Passthrough Patterns**: Regex-based URL exclusions (e.g. skip `.gif`, `.svg`)
-- **Size Guards**: Max input bytes and max pixel count to avoid OOM on huge images
-- **Graceful Degradation**: Decode errors, encode failures, oversized images, and unsupported clients all pass through the original
+<p align="center">
+  <a href="https://github.com/zentinelproxy/zentinel-agent-image-optimization/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zentinelproxy/zentinel-agent-image-optimization/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Agent protocol: v2" src="https://img.shields.io/badge/agent%20protocol-v2-f68d31?style=flat&labelColor=1f161e">
+</p>
 
-## Installation
+<p align="center">
+  <a href="https://registry.zentinelproxy.io/image-optimization/">Registry</a> &middot;
+  <a href="https://docs.zentinelproxy.io">Docs</a> &middot;
+  <a href="https://github.com/zentinelproxy">All repositories</a>
+</p>
 
-### Using Bundle (Recommended)
+The agent reads the client's `Accept` header on the request, checks the
+upstream's `Content-Type` on the response, and, when the client accepts one of
+the configured formats, buffers the image body, converts it and hands the converted bytes back to
+the proxy. Results are cached in a content-addressable directory, keyed by URI,
+format and quality. Images that cannot be decoded or encoded, or that exceed the
+size limits, pass through unchanged. Run it with `failure-mode "open"`, so a
+crashed or slow agent costs you the optimization, not the image.
+
+## Quick start
 
 ```bash
-# Install just this agent
 zentinel bundle install image-optimization
-
-# Or install all bundled agents
-zentinel bundle install
+zentinel-image-optimization-agent --socket /var/run/zentinel/image-optimization.sock
 ```
 
-The bundle command downloads the correct binary for your platform and places it in the standard location. See the [bundle documentation](https://docs.zentinelproxy.io/deployment/bundle/) for details.
+```kdl
+system {
+    worker-threads 0
+}
 
-### Using Cargo
+listeners {
+    listener "http" {
+        address "127.0.0.1:8080"
+        protocol "http"
+    }
+}
 
-Not supported. `zentinel-agent-image-optimization` is not published on crates.io, and it depends on
-`zentinel-agent-protocol` through a path dependency, so neither
-`cargo install zentinel-agent-image-optimization` nor `cargo install --git` works. Use a prebuilt
-binary or build from source (below).
+agents {
+    agent "image-optimization" type="custom" {
+        unix-socket "/var/run/zentinel/image-optimization.sock"
+        events "request_headers" "response_headers" "response_body"
+        timeout-ms 5000
+        failure-mode "open"
+        response-body-mode "buffer"
+        max-response-body-bytes 10485760
+    }
+}
 
-### Prebuilt Binaries
+filters {
+    filter "image-optimization" {
+        type "agent"
+        agent "image-optimization"
+        failure-mode "open"
+    }
+}
 
-Each [release](https://github.com/zentinelproxy/zentinel-agent-image-optimization/releases) ships binaries
-for `linux-x86_64`, `linux-aarch64`, and `darwin-aarch64`:
+routes {
+    route "images" {
+        matches {
+            path-prefix "/images/"
+        }
+        upstream "backend"
+        filters "image-optimization"
+    }
+}
+
+upstreams {
+    upstream "backend" {
+        target "127.0.0.1:3000"
+    }
+}
+```
+
+## Install
+
+**Bundle (recommended).** Downloads the release binary for your platform:
+
+```bash
+zentinel bundle install image-optimization
+```
+
+See [the bundle documentation](https://docs.zentinelproxy.io/deployment/bundle/).
+
+**Release binaries.** Each [release](https://github.com/zentinelproxy/zentinel-agent-image-optimization/releases)
+ships `linux-x86_64`, `linux-aarch64` and `darwin-aarch64` archives:
 
 ```bash
 VERSION=0.2.0
@@ -47,10 +107,9 @@ tar -xzf zentinel-image-optimization-agent.tar.gz
 sudo install -m 0755 zentinel-image-optimization-agent /usr/local/bin/
 ```
 
-### From Source
-
-Building from source requires the [zentinel](https://github.com/zentinelproxy/zentinel) repository checked out
-**next to** this one, because `zentinel-agent-protocol` is a path dependency:
+**From source.** The crate takes `zentinel-agent-protocol` as a path dependency
+on a sibling `zentinel` checkout, so `cargo install --git` does not work, and the
+crate is not on crates.io:
 
 ```bash
 git clone https://github.com/zentinelproxy/zentinel
@@ -59,48 +118,23 @@ cd zentinel-agent-image-optimization
 cargo build --release
 ```
 
-## Quick Start
-
-Run the agent with default settings:
-
-```bash
-zentinel-image-optimization-agent --socket /tmp/image-optimization.sock
-```
-
-Configure Zentinel to use the agent:
-
-```kdl
-agents {
-    agent "image-optimization" {
-        unix-socket "/tmp/image-optimization.sock"
-        events "request_headers" "response_headers" "response_body" "request_complete"
-        timeout-ms 5000
-        failure-mode "open"
-
-        config {
-            formats "webp" "avif"
-            quality {
-                webp 80
-                avif 70
-            }
-            max_input_size_bytes 10485760
-            max_pixel_count 25000000
-            eligible_content_types "image/jpeg" "image/png"
-            passthrough_patterns "\\.gif$" "\\.svg$"
-            cache {
-                enabled #true
-                directory "/var/cache/zentinel/image-optimization"
-                max_size_bytes 1073741824
-                ttl_secs 86400
-            }
-        }
-    }
-}
-```
+A hardened systemd unit is in
+[`zentinel-image-optimization-agent.service`](zentinel-image-optimization-agent.service);
+it runs the agent on `/var/run/zentinel/image-optimization.sock` with
+`--config /etc/zentinel/agents/image-optimization.json`.
 
 ## Configuration
 
-Pass a JSON config file with `--config`, or let the proxy send configuration via the `configure` event.
+Command-line flags:
+
+| Flag | Env | Default | Meaning |
+|---|---|---|---|
+| `-s, --socket <PATH>` | `IMAGE_OPT_SOCKET` | `/tmp/image-optimization-agent.sock` (if neither transport is given) | Unix socket to listen on |
+| `-g, --grpc <ADDR>` | `IMAGE_OPT_GRPC` | none | gRPC address, e.g. `0.0.0.0:50060`; excludes `--socket` |
+| `-c, --config <FILE>` | `IMAGE_OPT_CONFIG` | built-in defaults | JSON configuration file (below) |
+| `-l, --log-level <LEVEL>` | `IMAGE_OPT_LOG_LEVEL` | `info` | Log level; `RUST_LOG` takes precedence |
+
+The JSON file ([`config/default.json`](config/default.json) has every key at its default):
 
 ```json
 {
@@ -119,114 +153,93 @@ Pass a JSON config file with `--config`, or let the proxy send configuration via
 }
 ```
 
-### Options
+| Option | Default | Meaning |
+|---|---|---|
+| `formats` | `["webp", "avif"]` | Output formats in priority order; must not be empty |
+| `quality.avif` | `70` | AVIF quality, 1 to 100 |
+| `quality.webp` | `80` | Validated (1 to 100) and part of the cache key, but not applied: WebP output is always lossless (VP8L) |
+| `max_input_size_bytes` | `10485760` (10 MiB) | Larger images pass through |
+| `max_pixel_count` | `25000000` | Images with more pixels pass through |
+| `eligible_content_types` | `["image/jpeg", "image/png"]` | Response content types to convert |
+| `passthrough_patterns` | `[]` | Regexes on the request URI to skip |
+| `cache.enabled` | `true` | Enable the filesystem cache |
+| `cache.directory` | `/var/cache/zentinel/image-optimization` | Cache root |
+| `cache.max_size_bytes` | `1073741824` (1 GiB) | Size at which the oldest entries are evicted |
+| `cache.ttl_secs` | `86400` | Age after which an entry counts as a miss |
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `formats` | `["webp", "avif"]` | Output formats in priority order |
-| `quality.webp` | `80` | WebP quality (1–100) |
-| `quality.avif` | `70` | AVIF quality (1–100) |
-| `max_input_size_bytes` | `10485760` (10 MB) | Skip images larger than this |
-| `max_pixel_count` | `25000000` (25 MP) | Skip images with more pixels than this |
-| `eligible_content_types` | `["image/jpeg", "image/png"]` | Response content types to optimize |
-| `passthrough_patterns` | `[]` | Regex patterns for URLs to skip |
-| `cache.enabled` | `true` | Enable filesystem cache |
-| `cache.directory` | `/var/cache/zentinel/image-optimization` | Cache root directory |
-| `cache.max_size_bytes` | `1073741824` (1 GB) | Max total cache size (LRU eviction) |
-| `cache.ttl_secs` | `86400` (24 h) | Time-to-live for cached entries |
+A file that fails to parse stops the agent at startup. Configure the agent with
+this file: an agent block's `config { }` in the proxy's KDL is not forwarded to
+the agent by the current proxy.
 
-## How It Works
+Proxy-side options (`events`, `timeout-ms`, `failure-mode`, body modes):
+<https://docs.zentinelproxy.io/configuration/agents/>. Agent reference:
+<https://registry.zentinelproxy.io/image-optimization/>.
 
-```
-Client                  Zentinel Proxy              Image Optimization Agent
-  │                         │                               │
-  │  GET /photo.jpg         │                               │
-  │  Accept: image/webp     │                               │
-  │────────────────────────►│  request_headers              │
-  │                         │──────────────────────────────►│
-  │                         │  (extract Accept + URI)       │
-  │                         │◄──────────────────────────────│
-  │                         │                               │
-  │                         │  response_headers             │
-  │                         │──────────────────────────────►│
-  │                         │  (check content-type,         │
-  │                         │   negotiate format,           │
-  │                         │   check cache)                │
-  │                         │◄──────────────────────────────│
-  │                         │                               │
-  │                         │  response_body (chunks)       │
-  │                         │──────────────────────────────►│
-  │                         │  (buffer → convert → cache)   │
-  │                         │◄──────────────────────────────│
-  │                         │                               │
-  │  200 OK                 │                               │
-  │  Content-Type: image/webp                               │
-  │  X-Image-Optimized: webp                                │
-  │◄────────────────────────│                               │
-```
-
-## Response Headers
-
-On successful conversion, the agent sets these headers:
-
-| Header | Value | Description |
-|--------|-------|-------------|
-| `Content-Type` | `image/webp` or `image/avif` | The optimized format |
-| `Content-Length` | `<bytes>` | Optimized image size |
-| `Vary` | `Accept` | Downstream caches vary by format |
-| `X-Image-Optimized` | `webp`, `avif`, or `cache-hit` | Which format was served |
-| `X-Image-Original-Size` | `<bytes>` | Original image size before conversion |
-
-## Failure Modes
-
-All failures result in pass-through of the original image:
-
-| Scenario | Behavior |
-|----------|----------|
-| Corrupt image / decode error | Pass through original |
-| Encode failure | Pass through original |
-| Image too large (bytes or pixels) | Pass through original, skip processing |
-| Client doesn't support WebP/AVIF | Pass through original (no conversion) |
-| Cache write failure | Serve converted image, log error |
-| Cache read failure | Treat as miss, convert normally |
-| Config parse error | Reject config with 500 (operator error) |
-
-The proxy-level `failure-mode "open"` setting ensures that if the agent process crashes or times out, the original response passes through unmodified.
-
-## CLI Options
+## How it works
 
 ```
-zentinel-image-optimization-agent [OPTIONS]
-
-Options:
-  -s, --socket <PATH>     Unix socket path [env: IMAGE_OPT_SOCKET]
-  -g, --grpc <ADDR>       gRPC address (e.g. 0.0.0.0:50060) [env: IMAGE_OPT_GRPC]
-  -c, --config <FILE>     Configuration file (JSON) [env: IMAGE_OPT_CONFIG]
-  -l, --log-level <LEVEL> Log level [default: info] [env: IMAGE_OPT_LOG_LEVEL]
-  -h, --help              Print help
-  -V, --version           Print version
+Client                  Zentinel                    Image optimization agent
+  │  GET /photo.jpg        │                               │
+  │  Accept: image/webp    │  request_headers              │
+  │───────────────────────►│──────────────────────────────►│  remember Accept + URI
+  │                        │  response_headers             │
+  │                        │──────────────────────────────►│  check Content-Type,
+  │                        │◄──────────────────────────────│  negotiate, check cache,
+  │                        │  (Content-Type, Vary set)     │  set response headers
+  │                        │  response_body                │
+  │                        │──────────────────────────────►│  convert (or cache hit),
+  │                        │◄──────────────────────────────│  replace body, cache
+  │  200 image/webp        │                               │
+  │◄───────────────────────│                               │
 ```
 
-If neither `--socket` nor `--grpc` is specified, defaults to `/tmp/image-optimization-agent.sock`.
+- **Negotiation.** The first entry of `formats` that the `Accept` header
+  accepts with a non-zero quality wins; quality values do not rank formats
+  against each other, and `image/*` or `*/*` count as accepting. A request
+  with no `Accept` header gets the first format.
+  Clients that accept none of the formats get the original.
+- **Headers.** The agent sets `Content-Type` to the target format and
+  `Vary: Accept`, and removes `Content-Length`, in the response-headers phase,
+  before conversion. If conversion then fails, the original bytes are sent with
+  the new `Content-Type`.
+- **Not sent to clients.** The handler also sets `X-Image-Optimized` and
+  `X-Image-Original-Size` with the converted body, but the proxy does not apply
+  header changes returned with a body chunk, so these headers do not reach the
+  client today.
+- **Encoders.** WebP is lossless, via the pure-Rust `image` crate. AVIF is lossy,
+  via `ravif`, with `quality.avif`. Conversion runs on a blocking thread.
+- **Cache.** Two-level sharded directories under `cache.directory`, a `.bin` file
+  and a `.meta.json` sidecar per entry, named by the SHA-256 of
+  `"{uri}:{format}:{quality}"`. Read errors count as misses; write errors are
+  logged and the converted image is still served.
 
-## Cache Layout
+## Development
 
-The filesystem cache uses content-addressable storage with two-level directory sharding:
+The build needs the `zentinel` repository checked out next to this one (CI
+clones it to `../zentinel`), and AVIF encoding needs `nasm`.
 
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test
 ```
-/var/cache/zentinel/image-optimization/
-├── a3/
-│   └── 7f/
-│       ├── a37f...c4e2.bin          # Optimized image bytes
-│       └── a37f...c4e2.meta.json    # Metadata sidecar
-└── b1/
-    └── 02/
-        ├── b102...9af1.bin
-        └── b102...9af1.meta.json
-```
 
-Cache keys are SHA-256 hashes of `"{uri}:{format}:{quality}"`.
+`tests/e2e-integration.sh` runs the agent behind a real proxy.
+
+## Related
+
+- [Registry page](https://registry.zentinelproxy.io/image-optimization/)
+- [Agents configuration](https://docs.zentinelproxy.io/configuration/agents/)
+- [Agent protocol v2](https://docs.zentinelproxy.io/agents/v2/)
+- [Zentinel](https://github.com/zentinelproxy/zentinel)
+- [Transform agent](https://github.com/zentinelproxy/zentinel-agent-transform), for header and body rewrites
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0, as declared in `Cargo.toml`. The repository has no `LICENSE` file yet.
+
+---
+
+<p align="center">
+  <sub>Part of <a href="https://zentinelproxy.io">Zentinel</a>, the security-first reverse proxy. The shisa guards the gate.</sub>
+</p>
