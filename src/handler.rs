@@ -376,10 +376,16 @@ impl AgentHandlerV2 for ImageOptAgent {
         }
         drop(cache_guard);
 
-        // Set Content-Type to the target format now. The proxy commits response headers
-        // before body filtering begins, so header modifications from body chunk responses
-        // are not applied. Conversion failures are very rare (invalid image data that passes
-        // Content-Type validation) and browsers handle MIME/content mismatches gracefully.
+        // Set Content-Type (and X-Image-Optimized) for the target format now. The proxy
+        // commits response headers before body filtering begins, so header modifications
+        // from body chunk responses are not applied. Conversion failures are very rare
+        // (invalid image data that passes Content-Type validation) and browsers handle
+        // MIME/content mismatches gracefully.
+        let optimized = if state.cache_hit.is_some() {
+            "cache-hit"
+        } else {
+            target_format.as_str()
+        };
         let mut response = AgentResponse::default_allow()
             .add_response_header(HeaderOp::Remove {
                 name: "content-length".to_string(),
@@ -391,6 +397,10 @@ impl AgentHandlerV2 for ImageOptAgent {
             .add_response_header(HeaderOp::Set {
                 name: "vary".to_string(),
                 value: "Accept".to_string(),
+            })
+            .add_response_header(HeaderOp::Set {
+                name: "x-image-optimized".to_string(),
+                value: optimized.to_string(),
             });
 
         // Signal that we need the body for conversion
@@ -741,6 +751,11 @@ mod tests {
             .any(|h| matches!(h, HeaderOp::Remove { name } if name == "content-length")));
         assert!(response.response_headers.iter().any(
             |h| matches!(h, HeaderOp::Set { name, value } if name == "content-type" && value == "image/webp")
+        ));
+        // X-Image-Optimized has to be set here too: the proxy commits the
+        // response headers before the body phase.
+        assert!(response.response_headers.iter().any(
+            |h| matches!(h, HeaderOp::Set { name, value } if name == "x-image-optimized" && value == "webp")
         ));
 
         // 3. Response body (single chunk with JPEG data)

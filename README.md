@@ -130,8 +130,8 @@ Command-line flags:
 
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
-| `-s, --socket <PATH>` | `IMAGE_OPT_SOCKET` | `/tmp/image-optimization-agent.sock` (if neither transport is given) | Unix socket to listen on |
-| `-g, --grpc <ADDR>` | `IMAGE_OPT_GRPC` | none | gRPC address, e.g. `0.0.0.0:50060`; excludes `--socket` |
+| `-s, --socket <PATH>` | `IMAGE_OPT_SOCKET` | `/tmp/image-optimization-agent.sock` | Unix socket to serve agent protocol v2 on |
+| `-g, --grpc-address <ADDR>` (alias `--grpc`) | `IMAGE_OPT_GRPC` | none | Serve gRPC on this address (e.g. `127.0.0.1:50060`) instead of the Unix socket |
 | `-c, --config <FILE>` | `IMAGE_OPT_CONFIG` | built-in defaults | JSON configuration file (below) |
 | `-l, --log-level <LEVEL>` | `IMAGE_OPT_LOG_LEVEL` | `info` | Log level; `RUST_LOG` takes precedence |
 
@@ -236,14 +236,14 @@ Client                  Zentinel                    Image optimization agent
   against each other, and `image/*` or `*/*` count as accepting. A request
   with no `Accept` header gets the first format.
   Clients that accept none of the formats get the original.
-- **Headers.** The agent sets `Content-Type` to the target format and
-  `Vary: Accept`, and removes `Content-Length`, in the response-headers phase,
-  before conversion. If conversion then fails, the original bytes are sent with
-  the new `Content-Type`.
-- **Not sent to clients.** The handler also sets `X-Image-Optimized` and
-  `X-Image-Original-Size` with the converted body, but the proxy does not apply
-  header changes returned with a body chunk, so these headers do not reach the
-  client today.
+- **Headers.** The agent sets `Content-Type` to the target format,
+  `Vary: Accept` and `X-Image-Optimized` (the format, or `cache-hit`), and
+  removes `Content-Length`, in the response-headers phase, before conversion.
+  If conversion then fails, the original bytes are sent with these headers.
+- **Not sent to clients.** The handler also sets `X-Image-Original-Size` with
+  the converted body, but the proxy does not apply header changes returned
+  with a body chunk, so it does not reach the client today. (Up to 0.2.0 the
+  same was true of `X-Image-Optimized`.)
 - **Encoders.** WebP is lossless, via the pure-Rust `image` crate. AVIF is lossy,
   via `ravif`, with `quality.avif`. Conversion runs on a blocking thread.
 - **Cache.** Two-level sharded directories under `cache.directory`, a `.bin` file
@@ -263,6 +263,20 @@ cargo test
 ```
 
 `tests/e2e-integration.sh` runs the agent behind a real proxy.
+
+`scripts/smoke-test.sh` is what CI and the release pipeline run: the shared
+harness (`agent-smoke/smoke.py` from
+[zentinelproxy/.github](https://github.com/zentinelproxy/.github)) checks the
+handshake, that a non-image request is forwarded, and that stopping the agent
+changes the answer; then `scripts/smoke/image-e2e.py` checks, behind the same
+Zentinel, that a PNG reaches a WebP-accepting client as WebP with
+`Content-Type: image/webp` and `X-Image-Optimized: webp`, and a PNG-only
+client gets the original bytes. A release runs it on every platform before
+anything is published.
+
+```bash
+AGENT_SMOKE=../.github/agent-smoke/smoke.py scripts/smoke-test.sh target/release/zentinel-image-optimization-agent ./zentinel
+```
 
 ## Related
 
