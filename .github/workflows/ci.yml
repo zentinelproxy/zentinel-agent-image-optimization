@@ -81,3 +81,26 @@ jobs:
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler nasm
       - run: cargo test --workspace
+
+  # The release pipeline on one platform, without publishing: builds the
+  # release binary with --locked and runs scripts/smoke-test.sh behind the
+  # latest Zentinel release, so a change that would break a release fails
+  # here first.
+  smoke:
+    name: Smoke
+    uses: zentinelproxy/.github/.github/workflows/agent-release.yml@v1
+    permissions:
+      contents: read
+    with:
+      binary: zentinel-image-optimization-agent
+      # zentinel-agent-protocol is a path dependency on ../zentinel. Pin the
+      # commit Cargo.lock was generated against, so the tag always builds the
+      # same thing; bump it together with Cargo.lock.
+      siblings: zentinelproxy/zentinel@3bcfe23e98c126112ba232182d1619c5491e1015
+      # AVIF encoding (rav1e) needs nasm.
+      apt-packages: protobuf-compiler nasm
+      brew-packages: protobuf nasm
+      smoke-command: scripts/smoke-test.sh
+      harness-ref: v1
+      platforms: '["linux-x86_64"]'
+      cache: true

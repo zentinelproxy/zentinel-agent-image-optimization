@@ -20,12 +20,25 @@ use zentinel_agent_protocol::v2::{GrpcAgentServerV2, UdsAgentServerV2};
     about = "Image optimization agent for Zentinel - on-the-fly WebP/AVIF conversion with caching"
 )]
 struct Args {
-    /// Unix socket path to listen on (mutually exclusive with --grpc).
-    #[arg(short, long, env = "IMAGE_OPT_SOCKET", conflicts_with = "grpc")]
-    socket: Option<PathBuf>,
+    /// Unix socket to listen on (agent protocol v2 over UDS). Used unless
+    /// `--grpc-address` is given.
+    #[arg(
+        short,
+        long,
+        default_value = "/tmp/image-optimization-agent.sock",
+        env = "IMAGE_OPT_SOCKET"
+    )]
+    socket: PathBuf,
 
-    /// gRPC address to listen on (e.g., "0.0.0.0:50060").
-    #[arg(short, long, env = "IMAGE_OPT_GRPC", conflicts_with = "socket")]
+    /// gRPC address to listen on (e.g. "127.0.0.1:50060"). When given, the
+    /// agent serves agent protocol v2 over gRPC instead of the Unix socket.
+    /// `--grpc` is accepted as an alias.
+    #[arg(
+        short,
+        long = "grpc-address",
+        visible_alias = "grpc",
+        env = "IMAGE_OPT_GRPC"
+    )]
     grpc: Option<String>,
 
     /// Log level (trace, debug, info, warn, error).
@@ -69,66 +82,61 @@ async fn main() -> Result<()> {
             .context("Failed to create image optimization agent")?,
     );
 
-    // Determine transport mode
-    match (&args.socket, &args.grpc) {
-        (Some(socket), None) => {
-            info!(
-                version = env!("CARGO_PKG_VERSION"),
-                socket = ?socket,
-                "Starting image optimization agent (Unix socket v2)"
-            );
-
-            let server = UdsAgentServerV2::new("image-optimization-agent", socket, agent);
-
-            info!("Image optimization agent ready and listening on Unix socket");
-
-            server
-                .run()
-                .await
-                .context("Failed to run image optimization agent server")?;
-        }
-        (None, Some(grpc_addr)) => {
-            info!(
-                version = env!("CARGO_PKG_VERSION"),
-                grpc = %grpc_addr,
-                "Starting image optimization agent (gRPC v2)"
-            );
-
-            let server = GrpcAgentServerV2::new("image-optimization-agent", agent);
-            let addr = grpc_addr
-                .parse()
-                .context("Invalid gRPC address format (expected host:port)")?;
-
-            info!("Image optimization agent ready and listening on gRPC");
-
-            server
-                .run(addr)
-                .await
-                .context("Failed to run image optimization agent gRPC server")?;
-        }
-        (None, None) => {
-            // Default to Unix socket if neither specified
-            let socket = PathBuf::from("/tmp/image-optimization-agent.sock");
-            info!(
-                version = env!("CARGO_PKG_VERSION"),
-                socket = ?socket,
-                "Starting image optimization agent (Unix socket v2, default)"
-            );
-
-            let server = UdsAgentServerV2::new("image-optimization-agent", socket, agent);
-
-            info!("Image optimization agent ready and listening on Unix socket");
-
-            server
-                .run()
-                .await
-                .context("Failed to run image optimization agent server")?;
-        }
-        (Some(_), Some(_)) => {
-            // This shouldn't happen due to clap's conflicts_with
-            unreachable!("Cannot specify both --socket and --grpc");
-        }
+    if let Some(grpc_addr) = &args.grpc {
+        let addr = grpc_addr
+            .parse()
+            .context("Invalid gRPC address format (expected host:port)")?;
+        info!(
+            version = env!("CARGO_PKG_VERSION"),
+            grpc = %grpc_addr,
+            "Listening on gRPC (agent protocol v2)"
+        );
+        GrpcAgentServerV2::new("image-optimization-agent", agent)
+            .run(addr)
+            .await
+            .context("Failed to run image optimization agent gRPC server")?;
+    } else {
+        info!(
+            version = env!("CARGO_PKG_VERSION"),
+            socket = %args.socket.display(),
+            "Listening on Unix socket (agent protocol v2)"
+        );
+        UdsAgentServerV2::new("image-optimization-agent", &args.socket, agent)
+            .run()
+            .await
+            .context("Failed to run image optimization agent server")?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_names_the_binary() {
+        let err = Args::try_parse_from(["x", "--version"]).unwrap_err();
+        assert_eq!(
+            err.to_string().trim(),
+            format!(
+                "zentinel-image-optimization-agent {}",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn transport_flags() {
+        let args = Args::try_parse_from(["x"]).unwrap();
+        assert!(args.grpc.is_none());
+        assert_eq!(
+            args.socket,
+            PathBuf::from("/tmp/image-optimization-agent.sock")
+        );
+        for flag in ["--grpc-address", "--grpc"] {
+            let args = Args::try_parse_from(["x", flag, "127.0.0.1:1"]).unwrap();
+            assert_eq!(args.grpc.as_deref(), Some("127.0.0.1:1"));
+        }
+    }
 }
