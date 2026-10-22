@@ -52,6 +52,18 @@ pub struct ImageOptAgent {
     cache: Arc<RwLock<Option<FilesystemCache>>>,
     /// Per-request state (correlation_id -> state).
     request_state: DashMap<String, RequestState>,
+    /// Serializes Configure events: the proxy configures every pooled
+    /// connection at once, and each must see the result of the one before.
+    configure_lock: tokio::sync::Mutex<()>,
+}
+
+/// What a Configure event did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigureOutcome {
+    /// The effective configuration is the one already active; nothing changed.
+    Unchanged,
+    /// A new configuration is active; `changed` names the keys that differ.
+    Applied { changed: Vec<String> },
 }
 
 impl ImageOptAgent {
@@ -89,7 +101,85 @@ impl ImageOptAgent {
             converters: Arc::new(converters),
             cache: Arc::new(RwLock::new(cache)),
             request_state: DashMap::new(),
+            configure_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Applies a Configure event from the proxy.
+    ///
+    /// - The block is merged onto the active settings (the `--config` file at
+    ///   startup): a key it leaves out keeps its value.
+    /// - An unknown key, a wrong type or a setting `validate_config` refuses
+    ///   rejects the whole configure; the active settings stay in force.
+    /// - A result identical to the active settings is a no-op. The proxy
+    ///   sends the same block on every connection.
+    /// - Otherwise only the parts whose settings changed are rebuilt: the
+    ///   cache (and its directory scan) only when `cache` changed, the
+    ///   converters only when `formats` changed. Requests in flight keep
+    ///   their state.
+    pub async fn apply_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<ConfigureOutcome, anyhow::Error> {
+        if !config.is_object() {
+            anyhow::bail!("the configuration must be an object, got {config}");
+        }
+        let _serialized = self.configure_lock.lock().await;
+
+        let active = self.config.read().await.clone();
+        let current = serde_json::to_value(&active)?;
+        let mut merged = current.clone();
+        crate::configure::merge(&mut merged, config);
+        let new_config: ImageOptConfig = serde_json::from_value(merged)
+            .map_err(|e| anyhow::anyhow!("invalid configuration: {e}"))?;
+        validate_config(&new_config).map_err(|e| anyhow::anyhow!("invalid configuration: {e}"))?;
+        let effective = serde_json::to_value(&new_config)?;
+        if crate::configure::config_hash(&effective) == crate::configure::config_hash(&current) {
+            return Ok(ConfigureOutcome::Unchanged);
+        }
+        let changed = crate::configure::changed_keys(&current, &effective);
+
+        // Build everything that can fail before changing anything.
+        let patterns = compile_patterns(&new_config.passthrough_patterns)?;
+        let cache_changed =
+            serde_json::to_value(&active.cache)? != serde_json::to_value(&new_config.cache)?;
+        let new_cache = if !cache_changed {
+            None
+        } else if new_config.cache.enabled {
+            Some(Some(
+                FilesystemCache::new(&new_config.cache)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to initialize cache: {e}"))?,
+            ))
+        } else {
+            Some(None)
+        };
+
+        if active.formats != new_config.formats {
+            for &format in &new_config.formats {
+                self.converters
+                    .entry(format.as_str().to_string())
+                    .or_insert_with(|| converter::create_converter(format));
+            }
+            self.converters
+                .retain(|name, _| new_config.formats.iter().any(|f| f.as_str() == name));
+        }
+        *self.passthrough_patterns.write().await = patterns;
+        if let Some(cache) = new_cache {
+            *self.cache.write().await = cache;
+        }
+        *self.config.write().await = new_config;
+        Ok(ConfigureOutcome::Applied { changed })
+    }
+
+    /// The active configuration, in the JSON form a Configure event uses.
+    pub async fn active_config(&self) -> serde_json::Value {
+        serde_json::to_value(&*self.config.read().await).unwrap_or_default()
+    }
+
+    /// Bytes the cache counts as stored, or `None` when caching is off.
+    pub async fn cache_size_bytes(&self) -> Option<u64> {
+        self.cache.read().await.as_ref().map(|c| c.current_size())
     }
 
     /// Get the quality setting for a format.
@@ -128,57 +218,32 @@ impl AgentHandlerV2 for ImageOptAgent {
         })
     }
 
-    async fn on_configure(&self, config: serde_json::Value, _version: Option<String>) -> bool {
-        info!("Received configuration");
-
-        match serde_json::from_value::<ImageOptConfig>(config) {
-            Ok(new_config) => {
-                if let Err(e) = validate_config(&new_config) {
-                    error!(error = %e, "Invalid configuration");
-                    return false;
-                }
-
-                // Recompile patterns
-                let patterns = match compile_patterns(&new_config.passthrough_patterns) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        error!(error = %e, "Failed to compile passthrough patterns");
-                        return false;
-                    }
-                };
-
-                // Update converters
-                self.converters.clear();
-                for &format in &new_config.formats {
-                    self.converters.insert(
-                        format.as_str().to_string(),
-                        converter::create_converter(format),
-                    );
-                }
-
-                // Update cache
-                let new_cache = if new_config.cache.enabled {
-                    match FilesystemCache::new(&new_config.cache).await {
-                        Ok(c) => Some(c),
-                        Err(e) => {
-                            error!(error = %e, "Failed to initialize cache");
-                            return false;
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                *self.passthrough_patterns.write().await = patterns;
-                *self.cache.write().await = new_cache;
-                *self.config.write().await = new_config;
-
-                info!("Configuration updated successfully");
+    /// See [`ImageOptAgent::apply_config`]. The config is never logged in
+    /// full; its hash and the names of the changed keys are.
+    async fn on_configure(&self, config: serde_json::Value, version: Option<String>) -> bool {
+        let hash = crate::configure::config_hash(&config);
+        match self.apply_config(&config).await {
+            Ok(ConfigureOutcome::Unchanged) => {
+                debug!(config_version = ?version, config_hash = %hash, "Configuration unchanged");
+                true
+            }
+            Ok(ConfigureOutcome::Applied { changed }) => {
+                info!(
+                    config_version = ?version,
+                    config_hash = %hash,
+                    changed_keys = ?changed,
+                    "Configuration applied"
+                );
                 true
             }
             Err(e) => {
-                warn!(error = %e, "Failed to parse configuration, using defaults");
-                true
+                error!(
+                    config_version = ?version,
+                    config_hash = %hash,
+                    error = %e,
+                    "Rejected configuration; keeping the current one"
+                );
+                false
             }
         }
     }

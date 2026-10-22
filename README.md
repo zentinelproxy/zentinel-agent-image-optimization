@@ -168,9 +168,46 @@ The JSON file ([`config/default.json`](config/default.json) has every key at its
 | `cache.max_size_bytes` | `1073741824` (1 GiB) | Size at which the oldest entries are evicted |
 | `cache.ttl_secs` | `86400` | Age after which an entry counts as a miss |
 
-A file that fails to parse stops the agent at startup. Configure the agent with
-this file: an agent block's `config { }` in the proxy's KDL is not forwarded to
-the agent by the current proxy.
+A file that fails to parse, or has a key not listed here, stops the agent at
+startup.
+
+### The `config { }` block
+
+Zentinel releases that include zentinelproxy/zentinel#603 send the agent
+block's `config { }` to the agent on every connection: once per pooled
+connection at startup and again on every reconnect. It uses the same keys as
+the file, and the agent applies it with these rules:
+
+- **Merge, don't replace.** The block is laid over the active settings (the
+  file, or the defaults). A key the block leaves out keeps its value, and
+  `quality { }` / `cache { }` only change the keys they name.
+- **Idempotent.** If the result is the configuration already active, compared
+  by a hash of its canonical JSON, nothing happens. When it differs, only the
+  changed parts are rebuilt: the cache (which rescans its directory) only when
+  a `cache` key changed, the converters only when `formats` changed. Requests
+  in flight are not affected.
+- **Strict.** An unknown or misspelled key, a value of the wrong type, or a
+  value the checks above refuse (an empty `formats`, a quality outside 1 to
+  100, an invalid regex) rejects the configure: the agent answers `false`, logs
+  why and keeps its active configuration, and the proxy does not use that
+  connection.
+- **Not logged in full.** The log shows the config's hash and the names of the
+  keys that changed.
+
+A list with one item may be written as a single value:
+
+```kdl
+agent "image-optimization" type="custom" {
+    unix-socket "/tmp/image-optimization-agent.sock"
+    config {
+        formats "webp"
+        max_pixel_count 16000000
+        quality {
+            avif 60
+        }
+    }
+}
+```
 
 Proxy-side options (`events`, `timeout-ms`, `failure-mode`, body modes):
 <https://docs.zentinelproxy.io/configuration/agents/>. Agent reference:

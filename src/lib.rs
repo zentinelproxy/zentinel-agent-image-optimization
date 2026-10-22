@@ -9,6 +9,7 @@
 pub mod buffer;
 pub mod cache;
 pub mod config;
+pub mod configure;
 pub mod converter;
 pub mod errors;
 pub mod handler;
@@ -16,4 +17,4 @@ pub mod negotiation;
 
 pub use config::ImageOptConfig;
 pub use errors::{ImageOptError, ImageOptResult};
-pub use handler::ImageOptAgent;
+pub use handler::{ConfigureOutcome, ImageOptAgent};

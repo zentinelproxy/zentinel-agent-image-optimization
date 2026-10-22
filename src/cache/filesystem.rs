@@ -51,6 +51,11 @@ impl FilesystemCache {
         Ok(cache)
     }
 
+    /// Bytes the cache currently counts as stored.
+    pub fn current_size(&self) -> u64 {
+        self.current_size.load(Ordering::Relaxed)
+    }
+
     /// Build the file path for a cache entry's data file.
     fn data_path(&self, key: &str) -> PathBuf {
         let shard1 = &key[..2];

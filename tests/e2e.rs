@@ -1191,12 +1191,12 @@ async fn configure_invalid_config_rejects() {
 async fn configure_malformed_json_preserves_config() {
     let (handle, _socket_path, client, _dir) = start_agent(config_no_cache()).await;
 
-    // Send malformed config: formats is a string instead of an array (type mismatch)
+    // Send malformed config: a format the agent does not know (type mismatch)
     let cid_cfg = "configure-0";
     let config_payload = serde_json::json!({
         "correlation_id": cid_cfg,
         "config": serde_json::json!({
-            "formats": "not-an-array"
+            "formats": "not-a-format"
         }),
         "config_version": "2",
     });
@@ -1204,10 +1204,10 @@ async fn configure_malformed_json_preserves_config() {
         .send_configure(cid_cfg, &config_payload)
         .await
         .unwrap();
-    assert_eq!(
-        resp.decision,
-        Decision::Allow,
-        "malformed config should Allow (parse failure keeps existing config)"
+    assert!(
+        matches!(resp.decision, Decision::Block { status: 500, .. }),
+        "a config that does not parse must be rejected, got {:?}",
+        resp.decision
     );
 
     // Original config should still work

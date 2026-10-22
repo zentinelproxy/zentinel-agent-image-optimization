@@ -30,6 +30,7 @@ impl OutputFormat {
 
 /// Root configuration for the Image Optimization Agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImageOptConfig {
     /// Output formats in priority order.
     #[serde(default = "default_formats")]
@@ -76,6 +77,7 @@ impl Default for ImageOptConfig {
 
 /// Quality settings per format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QualityConfig {
     /// WebP quality (1-100).
     #[serde(default = "default_webp_quality")]
@@ -93,6 +95,7 @@ impl Default for QualityConfig {
 
 /// Cache configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CacheConfig {
     /// Whether caching is enabled.
     #[serde(default = "default_cache_enabled")]
