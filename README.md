@@ -13,6 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/zentinelproxy/zentinel-agent-image-optimization/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zentinelproxy/zentinel-agent-image-optimization/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-9b4d8a?style=flat&labelColor=1f161e">
   <img alt="Agent protocol: v2" src="https://img.shields.io/badge/agent%20protocol-v2-f68d31?style=flat&labelColor=1f161e">
 </p>
 
@@ -236,7 +237,7 @@ cargo test
 
 ## License
 
-MIT OR Apache-2.0, as declared in `Cargo.toml`. The repository has no `LICENSE` file yet.
+MIT OR Apache-2.0, see [`LICENSE-MIT`](LICENSE-MIT) or [`LICENSE-APACHE`](LICENSE-APACHE), at your option.
 
 ---
 
